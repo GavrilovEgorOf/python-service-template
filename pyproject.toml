@@ -1,7 +1,7 @@
 [project]
 name = "python-service-template"
-version = "0.1.0"
-description = "Production-ready FastAPI microservice template with observability, tests, and CI"
+version = "0.4.0"
+description = "Production-ready FastAPI microservice golden path: async PostgreSQL, Redis, observability, CI"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -15,6 +15,8 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "structlog>=24.4.0",
     "httpx>=0.28.0",
+    "redis[hiredis]>=5.2.0",
+    "prometheus-client>=0.21.0",
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
     "opentelemetry-instrumentation-fastapi>=0.49b0",
@@ -28,10 +30,14 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
     "testcontainers[postgres]>=4.8.0",
+    "fakeredis[lua]>=2.26.0",
     "aiosqlite>=0.20.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
-    "types-requests>=2.32.0",
+    "types-redis>=4.6.0",
+    "bandit>=1.8.0",
+    "pip-audit>=2.7.0",
+    "pre-commit>=4.0.0",
 ]
 
 [build-system]
@@ -45,6 +51,9 @@ packages = ["app"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "integration: tests requiring PostgreSQL (Testcontainers or CI services)",
+]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
@@ -56,6 +65,9 @@ src = ["app", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["B008"]
 
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.mypy]
 python_version = "3.10"
 strict = true
@@ -63,13 +75,18 @@ plugins = ["pydantic.mypy"]
 packages = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*"]
+module = ["testcontainers.*", "fakeredis.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["app"]
 branch = true
+omit = ["app/main.py"]
 
 [tool.coverage.report]
-fail_under = 75
+fail_under = 79
 show_missing = true
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]

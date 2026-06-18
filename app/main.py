@@ -1,34 +1,43 @@
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
-import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.router import api_router
+from app.api.exceptions import register_exception_handlers
+from app.api.middleware.request_id import RequestIdMiddleware
+from app.api.routes.v1 import health
+from app.api.v1_router import v1_router
 from app.core.config import settings
+from app.core.lifespan import lifespan
 from app.core.logging import setup_logging
-from app.core.telemetry import setup_telemetry
-
-logger = structlog.get_logger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    logger.info("service_starting", app=settings.app_name, environment=settings.environment)
-    yield
-    logger.info("service_stopping", app=settings.app_name)
+from app.core.metrics import setup_metrics
+from app.core.telemetry import setup_fastapi_telemetry
 
 
 def create_app() -> FastAPI:
     setup_logging()
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version=settings.app_version,
         debug=settings.debug,
         lifespan=lifespan,
+        docs_url="/docs",
+        redoc_url="/redoc",
     )
-    app.include_router(api_router)
-    setup_telemetry(app)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"] if settings.debug else [],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(RequestIdMiddleware)
+
+    register_exception_handlers(app)
+    app.include_router(v1_router, prefix=settings.api_v1_prefix)
+    app.include_router(health.router, prefix="/health")
+
+    setup_metrics(app)
+    setup_fastapi_telemetry(app)
     return app
 
 

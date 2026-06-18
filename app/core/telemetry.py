@@ -8,10 +8,10 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from app.core.config import settings
-from app.db.session import engine
+from app.db import session as db_session
 
 
-def setup_telemetry(app: FastAPI) -> None:
+def setup_fastapi_telemetry(app: FastAPI) -> None:
     if not settings.otel_enabled:
         return
 
@@ -25,6 +25,11 @@ def setup_telemetry(app: FastAPI) -> None:
     exporter = OTLPSpanExporter(endpoint=settings.otel_exporter_endpoint, insecure=True)
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
-
     FastAPIInstrumentor.instrument_app(app)
-    SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
+
+
+def instrument_sqlalchemy() -> None:
+    if not settings.otel_enabled:
+        return
+    if db_session.engine is not None:
+        SQLAlchemyInstrumentor().instrument(engine=db_session.engine.sync_engine)

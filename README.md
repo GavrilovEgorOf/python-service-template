@@ -2,28 +2,42 @@
 
 [![CI](https://github.com/GavrilovEgorOf/python-service-template/actions/workflows/ci.yml/badge.svg)](https://github.com/GavrilovEgorOf/python-service-template/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue)](https://github.com/GavrilovEgorOf/python-service-template/releases)
 
-Production-ready **FastAPI microservice template** for teams that want a golden path: async PostgreSQL, Alembic migrations, structured logging, OpenTelemetry hooks, Docker, and CI with ruff, mypy, pytest, and Testcontainers.
+Production-ready **FastAPI microservice golden path** for teams and senior backend portfolios: async PostgreSQL, Redis caching, idempotency, auth hooks, observability, split CI, and Docker.
 
-Built for **remote EU/US backend / platform engineering portfolios** and as a starting point for real services.
+## Architecture
+
+```mermaid
+flowchart LR
+    Client -->|HTTP| API[FastAPI /api/v1]
+    API --> Middleware[Request ID + CORS]
+    Middleware --> Auth[deps.py auth stub]
+    Auth --> Service[Service layer]
+    Service --> DB[(PostgreSQL)]
+    Service --> Redis[(Redis cache + idempotency)]
+    API --> Metrics[/metrics Prometheus/]
+    API --> OTel[OpenTelemetry OTLP]
+    API --> Health[/health/live + /ready/]
+```
 
 ## Why this template
 
-| Problem | What this repo gives you |
-|---------|--------------------------|
-| Every new service starts from scratch | Clone, rename, ship |
-| Inconsistent project layout | Layered `api / services / db / schemas` structure |
-| Missing prod basics | Health checks, migrations, observability hooks, CI |
-| Tests without real Postgres | Testcontainers integration tests |
+| Problem | Golden path answer |
+|---------|-------------------|
+| Every service starts from scratch | Clone, rename, ship |
+| Missing prod hygiene | Global exceptions, request ID, readiness split |
+| ML/backend teams need standards | Layered layout + ADR + CONTRIBUTING |
+| CI without real infra | Unit (SQLite + FakeRedis) + integration (Postgres + Redis) |
 
 ## Stack
 
-- **FastAPI** + **Uvicorn**
-- **SQLAlchemy 2 async** + **asyncpg** + **Alembic**
-- **Pydantic Settings**, **structlog**
-- **OpenTelemetry** (FastAPI + SQLAlchemy instrumentation)
-- **pytest**, **Testcontainers**, **ruff**, **mypy**
-- **Docker Compose** (API + Postgres + Redis)
+- **FastAPI** + **Uvicorn** + **API versioning** (`/api/v1`)
+- **SQLAlchemy 2 async** + **Alembic** + **PostgreSQL**
+- **Redis** — cache, idempotency keys, readiness probe
+- **Auth stub** — Bearer JWT placeholder + `X-API-Key`
+- **Observability** — structlog, Prometheus `/metrics`, OpenTelemetry
+- **Quality** — ruff, mypy, bandit, pip-audit, pre-commit, pytest
 
 ## Quick start
 
@@ -42,94 +56,75 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Open:
+Endpoints:
 
-- Swagger UI: http://localhost:8000/docs
-- Liveness: http://localhost:8000/health/live
-- Readiness: http://localhost:8000/health/ready
+| URL | Purpose |
+|-----|---------|
+| http://localhost:8000/docs | Swagger UI |
+| http://localhost:8000/api/v1/items | Sample CRUD API |
+| http://localhost:8000/api/v1/health/ready | Readiness (DB + Redis) |
+| http://localhost:8000/health/live | K8s liveness alias |
+| http://localhost:8000/metrics | Prometheus metrics |
 
-## Rename for your service
+## Features (v0.4)
 
-```bash
-python scripts/rename_service.py billing-api
-```
-
-Updates default app name, OTEL service name, and docs references.
+- **Pagination** — `GET /api/v1/items?limit=20&offset=0&sort=-created_at`
+- **Idempotency** — `Idempotency-Key` header on `POST /api/v1/items`
+- **Redis cache** — `GET /api/v1/items/{id}` with TTL
+- **Auth** — disable via `AUTH_DISABLED=true` or use `X-API-Key` / Bearer stub
+- **Request tracing** — `X-Request-ID` propagated to logs and error payloads
 
 ## Project layout
 
 ```
 app/
-├── api/           # HTTP routes
-├── core/          # config, logging, telemetry
-├── db/            # SQLAlchemy models + session
-├── schemas/       # Pydantic DTOs
-├── services/      # business logic
-└── main.py        # FastAPI app factory
-alembic/           # database migrations
-tests/             # pytest + Testcontainers
-deploy/            # OTEL collector config
-docs/adr/          # architecture decisions
-scripts/           # rename helper
+├── api/
+│   ├── deps.py              # auth dependencies
+│   ├── exceptions.py        # global error handlers
+│   ├── middleware/          # request ID
+│   └── routes/v1/           # versioned routes
+├── core/                    # config, logging, redis, metrics, lifespan
+├── domain/                  # domain errors + user context
+├── services/                # business logic + idempotency
+├── db/                      # SQLAlchemy models/session
+└── schemas/                 # Pydantic DTOs
+tests/
+├── unit/                    # fast: SQLite + FakeRedis
+└── integration/             # Postgres + Redis (CI services)
+docs/adr/                    # architecture decisions
 ```
 
-See [docs/adr/0001-project-structure.md](docs/adr/0001-project-structure.md).
-
-## Example API
+## Development
 
 ```bash
-curl -X POST http://localhost:8000/items \
-  -H "Content-Type: application/json" \
-  -d '{"name":"alpha","description":"first item"}'
+# Unit tests (default, no Docker)
+pytest tests/unit --cov=app
 
-curl http://localhost:8000/items
-```
+# Integration tests (Docker or CI services)
+pytest tests/integration -m integration
 
-## Development commands
-
-```bash
-ruff check app tests
+# Lint & types
+ruff check app tests && ruff format app tests
 mypy app
-pytest --cov=app --cov-report=term-missing
-alembic revision --autogenerate -m "describe change"
-alembic upgrade head
+pre-commit run --all-files
 ```
 
-## Docker
+## Docker (multi-stage, non-root)
 
 ```bash
-cp .env.example .env
 docker compose up --build
 ```
 
-Optional OpenTelemetry collector:
+Production image runs as `appuser` with `HEALTHCHECK` on `/health/live`.
 
-```bash
-docker compose --profile observability up --build
-```
+## Customize
 
-Set in `.env`:
+See [docs/CUSTOMIZE.md](docs/CUSTOMIZE.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-```env
-OTEL_ENABLED=true
-OTEL_EXPORTER_ENDPOINT=http://otel-collector:4317
-```
+## ADRs
 
-## CI
-
-GitHub Actions runs on every push/PR:
-
-1. `ruff check`
-2. `mypy app`
-3. `pytest` with coverage (Testcontainers requires Docker on the runner)
-
-## What to customize first
-
-1. Rename service via `scripts/rename_service.py`
-2. Replace the sample `Item` domain with your own models/services
-3. Add auth middleware (JWT/OAuth2) in `app/api/deps.py`
-4. Wire Redis for caching or Celery for background jobs
-5. Add Helm chart / Terraform module for your infra
+- [0001 — Project structure](docs/adr/0001-project-structure.md)
+- [0002 — API versioning & observability](docs/adr/0002-api-versioning-and-observability.md)
 
 ## License
 
