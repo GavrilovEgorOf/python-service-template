@@ -20,7 +20,7 @@ async def init_redis() -> Redis | None:  # type: ignore[type-arg]
 async def close_redis() -> None:
     global _redis
     if _redis is not None:
-        await _redis.close(close_connection_pool=True)  # type: ignore[attr-defined]
+        await _redis.close(close_connection_pool=True)
         _redis = None
 
 
