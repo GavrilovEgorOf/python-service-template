@@ -1,3 +1,5 @@
+import json
+from enum import Enum
 from typing import Any
 
 from redis.asyncio import Redis
@@ -5,6 +7,11 @@ from redis.asyncio import Redis
 from app.core.config import settings
 
 _redis: Redis | None = None  # type: ignore[type-arg]
+
+
+class IdempotencyStatus(str, Enum):
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
 
 
 async def init_redis() -> Redis | None:  # type: ignore[type-arg]
@@ -59,21 +66,98 @@ async def cache_delete(key: str) -> None:
     await client.delete(key)
 
 
-async def idempotency_get(key: str) -> dict[str, Any] | None:
-    import json
-
-    raw = await cache_get(f"idempotency:{key}")
-    if raw is None:
-        return None
-    parsed: dict[str, Any] = json.loads(raw)
-    return parsed
+async def cache_delete_pattern(pattern: str) -> None:
+    client = get_redis()
+    if client is None:
+        return
+    async for key in client.scan_iter(match=pattern):
+        await client.delete(key)
 
 
-async def idempotency_store(key: str, payload: dict[str, Any]) -> None:
-    import json
+def _idempotency_redis_key(key: str) -> str:
+    return f"idempotency:{key}"
 
-    await cache_set(
-        f"idempotency:{key}",
-        json.dumps(payload),
-        ttl_seconds=settings.idempotency_ttl_seconds,
+
+async def idempotency_acquire(
+    key: str,
+    request_hash: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """Return (state, payload) where state is acquired|completed|conflict|in_progress."""
+    client = get_redis()
+    if client is None:
+        return "acquired", None
+
+    redis_key = _idempotency_redis_key(key)
+    lock_payload = json.dumps(
+        {"status": IdempotencyStatus.IN_PROGRESS, "request_hash": request_hash},
     )
+    acquired = await client.set(
+        redis_key,
+        lock_payload,
+        nx=True,
+        ex=settings.idempotency_lock_ttl_seconds,
+    )
+    if acquired:
+        return "acquired", None
+
+    raw = await client.get(redis_key)
+    if raw is None:
+        return "acquired", None
+
+    payload: dict[str, Any] = json.loads(raw)
+    existing_hash = payload.get("request_hash")
+    if existing_hash != request_hash:
+        return "conflict", None
+
+    status = payload.get("status")
+    if status == IdempotencyStatus.COMPLETED:
+        return "completed", payload
+    return "in_progress", None
+
+
+async def idempotency_complete(
+    key: str,
+    request_hash: str,
+    *,
+    status_code: int,
+    response_body: dict[str, Any],
+) -> None:
+    client = get_redis()
+    if client is None:
+        return
+    payload = json.dumps(
+        {
+            "status": IdempotencyStatus.COMPLETED,
+            "request_hash": request_hash,
+            "status_code": status_code,
+            "response_body": response_body,
+        }
+    )
+    await client.set(_idempotency_redis_key(key), payload, ex=settings.idempotency_ttl_seconds)
+
+
+async def idempotency_release(key: str) -> None:
+    client = get_redis()
+    if client is None:
+        return
+    payload = await client.get(_idempotency_redis_key(key))
+    if not payload:
+        return
+    parsed: dict[str, Any] = json.loads(payload)
+    if parsed.get("status") == IdempotencyStatus.IN_PROGRESS:
+        await client.delete(_idempotency_redis_key(key))
+
+
+async def rate_limit_check(identifier: str) -> tuple[bool, int]:
+    client = get_redis()
+    if client is None or not settings.rate_limit_enabled:
+        return True, 0
+
+    window = settings.rate_limit_window_seconds
+    bucket_key = f"ratelimit:{identifier}:{window}"
+    count = await client.incr(bucket_key)
+    if count == 1:
+        await client.expire(bucket_key, window)
+    remaining = max(settings.rate_limit_requests - int(count), 0)
+    allowed = int(count) <= settings.rate_limit_requests
+    return allowed, remaining

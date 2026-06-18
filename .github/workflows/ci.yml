@@ -77,6 +77,8 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Run migrations
+        run: alembic upgrade head
       - name: Integration tests
         run: pytest tests/integration -m integration
 

@@ -22,7 +22,11 @@ def setup_fastapi_telemetry(app: FastAPI) -> None:
         }
     )
     provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(endpoint=settings.otel_exporter_endpoint, insecure=True)
+    otel_insecure: bool = settings.otel_insecure
+    exporter = OTLPSpanExporter(
+        endpoint=settings.otel_exporter_endpoint,
+        insecure=otel_insecure,
+    )
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
     FastAPIInstrumentor.instrument_app(app)

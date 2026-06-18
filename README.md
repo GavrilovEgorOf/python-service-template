@@ -2,42 +2,40 @@
 
 [![CI](https://github.com/GavrilovEgorOf/python-service-template/actions/workflows/ci.yml/badge.svg)](https://github.com/GavrilovEgorOf/python-service-template/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.0-blue)](https://github.com/GavrilovEgorOf/python-service-template/releases)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/GavrilovEgorOf/python-service-template/releases)
 
-Production-ready **FastAPI microservice golden path** for teams and senior backend portfolios: async PostgreSQL, Redis caching, idempotency, auth hooks, observability, split CI, and Docker.
+Production-ready **FastAPI microservice golden path** for senior backend / platform portfolios: JWT auth, Redis idempotency (SET NX), rate limiting, audit logging, hardened production settings, Helm chart, and split CI.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Client -->|HTTP| API[FastAPI /api/v1]
-    API --> Middleware[Request ID + CORS]
-    Middleware --> Auth[deps.py auth stub]
+    Client -->|HTTP /api/v1| API[FastAPI]
+    API --> ReqID[Request ID]
+    ReqID --> RateLimit[Rate limit Redis]
+    RateLimit --> Auth[JWT / API key deps]
     Auth --> Service[Service layer]
     Service --> DB[(PostgreSQL)]
     Service --> Redis[(Redis cache + idempotency)]
-    API --> Metrics[/metrics Prometheus/]
+    API --> Audit[Audit middleware]
+    API --> Metrics[/metrics protected/]
     API --> OTel[OpenTelemetry OTLP]
     API --> Health[/health/live + /ready/]
 ```
 
-## Why this template
+## Security & production features (v0.5)
 
-| Problem | Golden path answer |
-|---------|-------------------|
-| Every service starts from scratch | Clone, rename, ship |
-| Missing prod hygiene | Global exceptions, request ID, readiness split |
-| ML/backend teams need standards | Layered layout + ADR + CONTRIBUTING |
-| CI without real infra | Unit (SQLite + FakeRedis) + integration (Postgres + Redis) |
-
-## Stack
-
-- **FastAPI** + **Uvicorn** + **API versioning** (`/api/v1`)
-- **SQLAlchemy 2 async** + **Alembic** + **PostgreSQL**
-- **Redis** — cache, idempotency keys, readiness probe
-- **Auth stub** — Bearer JWT placeholder + `X-API-Key`
-- **Observability** — structlog, Prometheus `/metrics`, OpenTelemetry
-- **Quality** — ruff, mypy, bandit, pip-audit, pre-commit, pytest
+| Feature | Implementation |
+|---------|----------------|
+| **JWT auth** | PyJWT with iss/aud/exp validation |
+| **API key auth** | `X-API-Key` header |
+| **Prod guardrails** | Pydantic validator blocks insecure prod config |
+| **Idempotency** | Redis `SET NX` + in_progress/completed states |
+| **Rate limiting** | Redis sliding window on `/api/v1/items` |
+| **Metrics auth** | `/metrics` requires `X-Metrics-Key` or API key |
+| **Audit log** | structlog + optional DB persistence |
+| **Docs in prod** | Swagger disabled unless `DEBUG=true` |
+| **Helm chart** | `deploy/helm/python-service-template/` |
 
 ## Quick start
 
@@ -46,85 +44,65 @@ git clone https://github.com/GavrilovEgorOf/python-service-template.git my-servi
 cd my-service
 python scripts/rename_service.py my-service
 
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-
 cp .env.example .env
+
 docker compose up -d postgres redis
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Endpoints:
+Generate a JWT for local testing:
 
-| URL | Purpose |
-|-----|---------|
-| http://localhost:8000/docs | Swagger UI |
-| http://localhost:8000/api/v1/items | Sample CRUD API |
-| http://localhost:8000/api/v1/health/ready | Readiness (DB + Redis) |
-| http://localhost:8000/health/live | K8s liveness alias |
-| http://localhost:8000/metrics | Prometheus metrics |
-
-## Features (v0.4)
-
-- **Pagination** — `GET /api/v1/items?limit=20&offset=0&sort=-created_at`
-- **Idempotency** — `Idempotency-Key` header on `POST /api/v1/items`
-- **Redis cache** — `GET /api/v1/items/{id}` with TTL
-- **Auth** — disable via `AUTH_DISABLED=true` or use `X-API-Key` / Bearer stub
-- **Request tracing** — `X-Request-ID` propagated to logs and error payloads
-
-## Project layout
-
-```
-app/
-├── api/
-│   ├── deps.py              # auth dependencies
-│   ├── exceptions.py        # global error handlers
-│   ├── middleware/          # request ID
-│   └── routes/v1/           # versioned routes
-├── core/                    # config, logging, redis, metrics, lifespan
-├── domain/                  # domain errors + user context
-├── services/                # business logic + idempotency
-├── db/                      # SQLAlchemy models/session
-└── schemas/                 # Pydantic DTOs
-tests/
-├── unit/                    # fast: SQLite + FakeRedis
-└── integration/             # Postgres + Redis (CI services)
-docs/adr/                    # architecture decisions
+```python
+from app.core.security import create_access_token
+print(create_access_token("user-1"))
 ```
 
-## Development
+## API examples
 
 ```bash
-# Unit tests (default, no Docker)
-pytest tests/unit --cov=app
+# API key
+curl -H "X-API-Key: dev-api-key-change-me" http://localhost:8000/api/v1/items
 
-# Integration tests (Docker or CI services)
-pytest tests/integration -m integration
+# JWT
+curl -H "Authorization: Bearer <token>" http://localhost:8000/api/v1/items
 
-# Lint & types
-ruff check app tests && ruff format app tests
-mypy app
+# Idempotent create
+curl -X POST http://localhost:8000/api/v1/items \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: order-123" \
+  -d '{"name":"alpha"}'
+
+# Metrics (requires key)
+curl -H "X-Metrics-Key: dev-api-key-change-me" http://localhost:8000/metrics
+```
+
+## Testing
+
+```bash
+pytest tests/unit --cov=app          # fast: SQLite + FakeRedis
+pytest tests/integration -m integration  # Postgres + Redis + Alembic
 pre-commit run --all-files
 ```
 
-## Docker (multi-stage, non-root)
+## Production deploy (Helm)
+
+See [deploy/helm/python-service-template/PRODUCTION.md](deploy/helm/python-service-template/PRODUCTION.md).
 
 ```bash
-docker compose up --build
+helm upgrade --install api ./deploy/helm/python-service-template \
+  -f deploy/helm/python-service-template/values-prod.yaml
 ```
 
-Production image runs as `appuser` with `HEALTHCHECK` on `/health/live`.
+## Documentation
 
-## Customize
-
-See [docs/CUSTOMIZE.md](docs/CUSTOMIZE.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## ADRs
-
-- [0001 — Project structure](docs/adr/0001-project-structure.md)
-- [0002 — API versioning & observability](docs/adr/0002-api-versioning-and-observability.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [docs/CUSTOMIZE.md](docs/CUSTOMIZE.md)
+- [ADR 0001 — Project structure](docs/adr/0001-project-structure.md)
+- [ADR 0002 — API versioning & observability](docs/adr/0002-api-versioning-and-observability.md)
+- [ADR 0003 — Security & production hardening](docs/adr/0003-security-production-hardening.md)
 
 ## License
 

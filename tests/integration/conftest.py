@@ -4,10 +4,12 @@ from collections.abc import AsyncGenerator, Generator
 
 import pytest
 import pytest_asyncio
+from alembic import command
+from alembic.config import Config
 from app.core import redis as redis_module
 from app.core.config import settings
 from app.core.lifespan import lifespan
-from app.db.session import Base, dispose_engine, get_db_session, init_engine
+from app.db.session import dispose_engine, get_db_session, init_engine
 from app.main import create_app
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis
@@ -21,6 +23,13 @@ def _postgres_async_url() -> str:
         if url.startswith("postgresql+psycopg2://"):
             return url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
         return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+
+def _run_alembic(database_url: str) -> None:
+    os.environ["DATABASE_URL"] = database_url
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(cfg, "head")
 
 
 @pytest.fixture(scope="session")
@@ -43,12 +52,18 @@ def integration_redis_url() -> str:
     return os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def migrated_database(integration_database_url: str) -> None:
+    _run_alembic(integration_database_url)
+
+
 @pytest.fixture(autouse=True)
 def integration_settings(monkeypatch: pytest.MonkeyPatch, integration_database_url: str) -> None:
     monkeypatch.setattr(settings, "auth_disabled", True)
     monkeypatch.setattr(settings, "database_url", integration_database_url)
     monkeypatch.setattr(settings, "metrics_enabled", False)
     monkeypatch.setattr(settings, "otel_enabled", False)
+    monkeypatch.setattr(settings, "rate_limit_enabled", False)
 
 
 @pytest_asyncio.fixture
@@ -58,8 +73,6 @@ async def integration_client(
 ) -> AsyncGenerator[AsyncClient, None]:
     await dispose_engine()
     engine = init_engine(integration_database_url)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
     redis_client = Redis.from_url(integration_redis_url, decode_responses=True)
     await redis_client.ping()

@@ -5,7 +5,11 @@ from app.api.deps import get_current_user
 from app.db.session import get_db_session
 from app.schemas.item import ItemCreate, ItemListParams, ItemRead, PaginatedResponse
 from app.services import item_service
-from app.services.idempotency_service import begin_idempotent_request, complete_idempotent_request
+from app.services.idempotency_service import (
+    begin_idempotent_request,
+    complete_idempotent_request,
+    fail_idempotent_request,
+)
 
 router = APIRouter(
     prefix="/items",
@@ -28,7 +32,12 @@ async def create_item(
             response.status_code = int(cached["status_code"])
             return ItemRead.model_validate(cached["response_body"])
 
-    item = await item_service.create_item(session, payload)
+    try:
+        item = await item_service.create_item(session, payload)
+    except Exception:
+        if idempotency_key:
+            await fail_idempotent_request(idempotency_key)
+        raise
 
     if idempotency_key:
         await complete_idempotent_request(

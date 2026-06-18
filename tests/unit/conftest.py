@@ -13,6 +13,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
+TEST_API_KEY = "test-api-key"
+TEST_JWT_SECRET = "test-jwt-secret-for-unit-tests-32b-min"
 
 
 @pytest.fixture(scope="session")
@@ -29,6 +31,11 @@ def test_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "redis_url", None)
     monkeypatch.setattr(settings, "metrics_enabled", False)
     monkeypatch.setattr(settings, "otel_enabled", False)
+    monkeypatch.setattr(settings, "rate_limit_enabled", False)
+    monkeypatch.setattr(settings, "audit_log_persist", False)
+    monkeypatch.setattr(settings, "api_key", TEST_API_KEY)
+    monkeypatch.setattr(settings, "jwt_secret_key", TEST_JWT_SECRET)
+    monkeypatch.setattr(settings, "debug", True)
 
 
 @pytest_asyncio.fixture(autouse=True)

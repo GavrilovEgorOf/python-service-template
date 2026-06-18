@@ -12,3 +12,15 @@ class ItemNotFoundError(AppError):
 
 class IdempotencyConflictError(AppError):
     pass
+
+
+class AuthenticationError(AppError):
+    pass
+
+
+class IdempotencyInProgressError(AppError):
+    pass
+
+
+class RateLimitExceededError(AppError):
+    pass

@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.redis import close_redis, init_redis, ping_redis
+from app.core.startup import validate_runtime_settings
 from app.core.telemetry import instrument_sqlalchemy
 from app.db.session import dispose_engine, init_engine
 
@@ -15,6 +16,7 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    validate_runtime_settings()
     init_engine(settings.database_url)
     redis = await init_redis()
     instrument_sqlalchemy()

@@ -5,10 +5,15 @@ from fastapi.responses import JSONResponse
 
 from app.domain.exceptions import (
     AppError,
+    AuthenticationError,
     IdempotencyConflictError,
+    IdempotencyInProgressError,
     ItemAlreadyExistsError,
     ItemNotFoundError,
+    RateLimitExceededError,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -36,6 +41,31 @@ def register_exception_handlers(app: FastAPI) -> None:
             content={"detail": str(exc) or "Idempotency key reused with different payload"},
         )
 
+    @app.exception_handler(IdempotencyInProgressError)
+    async def idempotency_in_progress_handler(
+        _: Request,
+        exc: IdempotencyInProgressError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": str(exc) or "Idempotency key in progress"},
+        )
+
+    @app.exception_handler(AuthenticationError)
+    async def authentication_handler(_: Request, exc: AuthenticationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": str(exc)},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.exception_handler(RateLimitExceededError)
+    async def rate_limit_handler(_: Request, exc: RateLimitExceededError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"detail": str(exc) or "Rate limit exceeded"},
+        )
+
     @app.exception_handler(AppError)
     async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
@@ -56,7 +86,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", None)
-        structlog.get_logger(__name__).exception(
+        logger.exception(
             "unhandled_error",
             request_id=request_id,
             error=str(exc),

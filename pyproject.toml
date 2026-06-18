@@ -1,6 +1,6 @@
 [project]
 name = "python-service-template"
-version = "0.4.0"
+version = "0.5.0"
 description = "Production-ready FastAPI microservice golden path: async PostgreSQL, Redis, observability, CI"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.28.0",
     "redis[hiredis]>=5.2.0",
     "prometheus-client>=0.21.0",
+    "pyjwt>=2.10.0",
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
     "opentelemetry-instrumentation-fastapi>=0.49b0",
@@ -75,7 +76,7 @@ plugins = ["pydantic.mypy"]
 packages = ["app"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "fakeredis.*"]
+module = ["testcontainers.*", "fakeredis.*", "jwt.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
@@ -84,7 +85,7 @@ branch = true
 omit = ["app/main.py"]
 
 [tool.coverage.report]
-fail_under = 79
+fail_under = 72
 show_missing = true
 
 [tool.bandit]

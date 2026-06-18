@@ -2,8 +2,11 @@ import hashlib
 import json
 from typing import Any
 
-from app.core.redis import idempotency_get, idempotency_store
-from app.domain.exceptions import IdempotencyConflictError
+from app.core.redis import idempotency_acquire, idempotency_complete, idempotency_release
+from app.domain.exceptions import (
+    IdempotencyConflictError,
+    IdempotencyInProgressError,
+)
 
 
 def request_fingerprint(body: dict[str, Any]) -> str:
@@ -15,12 +18,15 @@ async def begin_idempotent_request(
     key: str,
     body: dict[str, Any],
 ) -> dict[str, Any] | None:
-    existing = await idempotency_get(key)
-    if existing is None:
-        return None
-    if existing.get("request_hash") != request_fingerprint(body):
-        raise IdempotencyConflictError
-    return existing
+    fingerprint = request_fingerprint(body)
+    state, payload = await idempotency_acquire(key, fingerprint)
+    if state == "conflict":
+        raise IdempotencyConflictError("Idempotency key reused with different payload")
+    if state == "in_progress":
+        raise IdempotencyInProgressError("Request with this idempotency key is already in progress")
+    if state == "completed" and payload is not None:
+        return payload
+    return None
 
 
 async def complete_idempotent_request(
@@ -30,11 +36,13 @@ async def complete_idempotent_request(
     status_code: int,
     response_body: dict[str, Any],
 ) -> None:
-    await idempotency_store(
+    await idempotency_complete(
         key,
-        {
-            "request_hash": request_fingerprint(body),
-            "status_code": status_code,
-            "response_body": response_body,
-        },
+        request_fingerprint(body),
+        status_code=status_code,
+        response_body=response_body,
     )
+
+
+async def fail_idempotent_request(key: str) -> None:
+    await idempotency_release(key)
